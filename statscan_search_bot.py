@@ -6,7 +6,7 @@ from transformers import pipeline
 import re
 
 st.set_page_config(page_title="StatsCan Chatbot", layout="wide")
-st.title("📊 Ask Statistics Canada (Smart Extractor + AI Chatbot)")
+st.title("📊 Ask Statistics Canada (Content-Aware AI Search Bot)")
 
 question = st.text_input("Ask a question (e.g., What is the population of Ottawa?)")
 SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
@@ -30,9 +30,12 @@ def extract_text_and_soup(url):
         main = soup.find("main") or soup.body
         paragraphs = main.find_all("p") if main else []
         tables = main.find_all(["td", "th"]) if main else []
+        links = main.find_all("a") if main else []
         paragraph_text = " ".join(p.get_text() for p in paragraphs)
         table_text = " ".join(t.get_text() for t in tables)
-        return paragraph_text + " " + table_text, soup, html
+        link_text = " ".join(a.get_text() for a in links)
+        full_text = paragraph_text + " " + table_text + " " + link_text
+        return full_text.strip(), soup, html
     except:
         return "", None, ""
 
@@ -72,6 +75,39 @@ def extract_the_daily_summary(html):
     except:
         return None
 
+def extract_portal_summary(soup):
+    try:
+        if not soup:
+            return None
+        summary_parts = []
+        headings = [h.get_text(strip=True) for h in soup.find_all(["h2", "h3"])]
+        items = [li.get_text(strip=True) for li in soup.find_all("li")]
+        links = [a.get_text(strip=True) for a in soup.find_all("a") if a.get_text(strip=True)]
+        summary_parts.extend(headings[:3])
+        summary_parts.extend(items[:5])
+        summary_parts.extend(links[:5])
+        summary_text = " • ".join(summary_parts[:8])
+        return summary_text if summary_text else None
+    except:
+        return None
+
+def is_codr_table_page(soup):
+    try:
+        return bool(soup.find("table"))
+    except:
+        return False
+
+def extract_codr_data_table(soup):
+    try:
+        rows = soup.find_all("tr")
+        entries = []
+        for row in rows[:5]:
+            cells = row.find_all(["th", "td"])
+            entries.append(" | ".join(cell.get_text(strip=True) for cell in cells))
+        return "\n".join(entries)
+    except:
+        return None
+
 if question:
     st.info("🔍 Searching Statistics Canada...")
     results = search_statcan(question)
@@ -80,7 +116,6 @@ if question:
         st.warning("No results found.")
     else:
         found_answer = False
-
         for result in results:
             title = result.get("title")
             link = result.get("link")
@@ -95,11 +130,29 @@ if question:
                     found_answer = True
                     break
 
+            if "portal" in title.lower():
+                portal_summary = extract_portal_summary(soup)
+                if portal_summary:
+                    st.subheader(f"🔎 {title}")
+                    st.markdown(f"**Portal Overview:** {portal_summary}")
+                    st.markdown(f"[🔗 Source]({link})")
+                    found_answer = True
+                    break
+
             if "population" in question.lower():
                 direct = extract_population_from_any_table(soup)
                 if direct:
                     st.subheader(f"🔎 {title}")
                     st.markdown(f"**Answer:** {direct}")
+                    st.markdown(f"[🔗 Source]({link})")
+                    found_answer = True
+                    break
+
+            if is_codr_table_page(soup):
+                codr_summary = extract_codr_data_table(soup)
+                if codr_summary:
+                    st.subheader(f"🔎 {title}")
+                    st.markdown(f"**Extracted Data Table:**\n\n{codr_summary}")
                     st.markdown(f"[🔗 Source]({link})")
                     found_answer = True
                     break
@@ -110,12 +163,10 @@ if question:
                         "context": content,
                         "question": question
                     })["answer"]
-
                     if answer.lower() in question.lower() or len(answer.split()) <= 2:
                         fallback = fallback_answer(question, content)
                         if fallback:
                             answer = fallback
-
                     st.subheader(f"🔎 {title}")
                     st.markdown(f"**Answer:** {answer}")
                     st.markdown(f"[🔗 Source]({link})")
