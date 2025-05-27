@@ -23,22 +23,18 @@ def search_statcan(query):
     data = res.json()
     return data.get("organic_results", [])
 
-def extract_text_from_url(url):
+def extract_text_and_soup(url):
     try:
         html = requests.get(url, timeout=10).text
         soup = BeautifulSoup(html, "html.parser")
         main = soup.find("main") or soup.body
-
         paragraphs = main.find_all("p") if main else []
         tables = main.find_all(["td", "th"]) if main else []
-
         paragraph_text = " ".join(p.get_text() for p in paragraphs)
         table_text = " ".join(t.get_text() for t in tables)
-        full_text = paragraph_text + " " + table_text
-
-        return full_text.strip(), soup
+        return paragraph_text + " " + table_text, soup, html
     except:
-        return "", None
+        return "", None, ""
 
 def extract_population_from_table(soup):
     try:
@@ -64,6 +60,16 @@ def fallback_answer(question, text):
             return match.group(1)
     return None
 
+def extract_the_daily_summary(html):
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        main = soup.find("main") or soup.body
+        paragraphs = main.find_all("p")
+        top_paragraphs = paragraphs[:3]
+        return " ".join(p.get_text(strip=True) for p in top_paragraphs)
+    except:
+        return None
+
 if question:
     st.info("🔍 Searching Statistics Canada...")
     results = search_statcan(question)
@@ -76,22 +82,28 @@ if question:
         for result in results:
             title = result.get("title")
             link = result.get("link")
-            content, soup = extract_text_from_url(link)
+            content, soup, html = extract_text_and_soup(link)
+
+            if "daily" in link.lower():
+                summary = extract_the_daily_summary(html)
+                if summary:
+                    st.subheader(f"🔎 {title}")
+                    st.markdown(f"**Summary:** {summary}")
+                    st.markdown(f"[🔗 Source]({link})")
+                    found_answer = True
+                    break
+
+            if "population" in question.lower():
+                direct = extract_population_from_table(soup)
+                if direct:
+                    st.subheader(f"🔎 {title}")
+                    st.markdown(f"**Answer:** {direct}")
+                    st.markdown(f"[🔗 Source]({link})")
+                    found_answer = True
+                    break
 
             if content:
-                # 1. Direct extraction if population question
-                if "population" in question.lower():
-                    direct = extract_population_from_table(soup)
-                    if direct:
-                        answer = direct
-                        st.subheader(f"🔎 {title}")
-                        st.markdown(f"**Answer:** {answer}")
-                        st.markdown(f"[🔗 Source]({link})")
-                        found_answer = True
-                        break
-
                 try:
-                    # 2. LLM-based QA for all other topics
                     answer = qa_pipeline({
                         "context": content,
                         "question": question
