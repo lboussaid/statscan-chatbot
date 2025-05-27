@@ -36,14 +36,16 @@ def extract_text_and_soup(url):
     except:
         return "", None, ""
 
-def extract_population_from_table(soup):
+def extract_population_from_any_table(soup):
     try:
-        if not soup:
-            return None
-        row = soup.find("th", string=re.compile("Population.*2021", re.I))
-        if row:
-            value = row.find_next("td").get_text(strip=True)
-            return value
+        for row in soup.find_all("tr"):
+            cells = row.find_all(["th", "td"])
+            for i, cell in enumerate(cells):
+                text = cell.get_text(strip=True).lower()
+                if "population" in text and i + 1 < len(cells):
+                    value = re.search(r"(\d[\d,]*)", cells[i + 1].get_text(strip=True))
+                    if value:
+                        return value.group(1)
     except:
         pass
     return None
@@ -94,7 +96,7 @@ if question:
                     break
 
             if "population" in question.lower():
-                direct = extract_population_from_table(soup)
+                direct = extract_population_from_any_table(soup)
                 if direct:
                     st.subheader(f"🔎 {title}")
                     st.markdown(f"**Answer:** {direct}")
