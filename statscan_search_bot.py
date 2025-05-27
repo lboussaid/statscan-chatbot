@@ -6,7 +6,7 @@ from transformers import pipeline
 import re
 
 st.set_page_config(page_title="StatsCan Chatbot", layout="wide")
-st.title("📊 Ask Statistics Canada (AI-Powered Search)")
+st.title("📊 Ask Statistics Canada (Smart Extractor + AI Chatbot)")
 
 question = st.text_input("Ask a question (e.g., What is the population of Ottawa?)")
 SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
@@ -28,6 +28,7 @@ def extract_text_from_url(url):
         html = requests.get(url, timeout=10).text
         soup = BeautifulSoup(html, "html.parser")
         main = soup.find("main") or soup.body
+
         paragraphs = main.find_all("p") if main else []
         tables = main.find_all(["td", "th"]) if main else []
 
@@ -35,14 +36,24 @@ def extract_text_from_url(url):
         table_text = " ".join(t.get_text() for t in tables)
         full_text = paragraph_text + " " + table_text
 
-        return full_text.strip()
+        return full_text.strip(), soup
     except:
-        return ""
+        return "", None
+
+def extract_population_from_table(soup):
+    try:
+        if not soup:
+            return None
+        row = soup.find("th", string=re.compile("Population.*2021", re.I))
+        if row:
+            value = row.find_next("td").get_text(strip=True)
+            return value
+    except:
+        pass
+    return None
 
 def fallback_answer(question, text):
-    location = question.split()[-1].lower()
     patterns = [
-        fr"population of {location}[^\d]*(\d[\d,]*)",
         r"Population\s*[:\-]?\s*(\d[\d,]*)",
         r"Total population\s*[:\-]?\s*(\d[\d,]*)",
         r"Population in \d{4}\s*[:\-]?\s*(\d[\d,]*)"
@@ -65,10 +76,22 @@ if question:
         for result in results:
             title = result.get("title")
             link = result.get("link")
-            content = extract_text_from_url(link)
+            content, soup = extract_text_from_url(link)
 
             if content:
+                # 1. Direct extraction if population question
+                if "population" in question.lower():
+                    direct = extract_population_from_table(soup)
+                    if direct:
+                        answer = direct
+                        st.subheader(f"🔎 {title}")
+                        st.markdown(f"**Answer:** {answer}")
+                        st.markdown(f"[🔗 Source]({link})")
+                        found_answer = True
+                        break
+
                 try:
+                    # 2. LLM-based QA for all other topics
                     answer = qa_pipeline({
                         "context": content,
                         "question": question
