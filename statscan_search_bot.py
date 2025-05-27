@@ -1,38 +1,47 @@
 import streamlit as st
-from duckduckgo_search import ddg
 import requests
 from bs4 import BeautifulSoup
+import os
 
 st.set_page_config(page_title="StatsCan Search Bot", layout="wide")
 st.title("📊 Real-Time Search Bot for Statistics Canada")
 
-query = st.text_input("Ask anything about Canadian stats (e.g. population of Ottawa):")
+SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
 
-def search_statcan_links(query):
-    results = ddg(f"site:statcan.gc.ca {query}", max_results=5)
-    return results
+query = st.text_input("Ask about Canadian statistics (e.g. 'labour force in Ontario'):")
 
-def quick_preview(url):
+def search_statcan(query):
+    params = {
+        "q": f"site:statcan.gc.ca {query}",
+        "api_key": SERPAPI_KEY,
+        "engine": "google",
+        "num": "5"
+    }
+    res = requests.get("https://serpapi.com/search", params=params)
+    data = res.json()
+    return data.get("organic_results", [])
+
+def preview(url):
     try:
-        html = requests.get(url, timeout=10).text
-        soup = BeautifulSoup(html, "html.parser")
+        r = requests.get(url, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
         paragraphs = soup.find_all("p")
-        snippet = " ".join(p.get_text() for p in paragraphs[:3])
-        return snippet.strip()
+        return " ".join(p.text for p in paragraphs[:3])
     except:
-        return "⚠️ Could not preview content."
+        return "Preview not available."
 
 if query:
-    st.info("🔍 Searching live...")
-    results = search_statcan_links(query)
+    st.info("🔎 Searching StatsCan...")
+    results = search_statcan(query)
 
     if not results:
-        st.warning("No relevant results found.")
+        st.warning("No results found.")
     else:
-        for res in results:
-            st.subheader(res["title"])
-            st.markdown(f"[🔗 Open Source]({res['href']})")
-            st.markdown(f"📄 URL: `{res['href']}`")
-            preview = quick_preview(res["href"])
-            st.markdown(f"📝 **Preview:** {preview}")
+        for result in results:
+            title = result.get("title")
+            link = result.get("link")
+            st.subheader(title)
+            st.markdown(f"[🔗 Source]({link})")
+            st.markdown(f"📄 URL: `{link}`")
+            st.markdown(f"📝 **Preview:** {preview(link)}")
             st.markdown("---")
